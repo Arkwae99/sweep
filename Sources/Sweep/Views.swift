@@ -122,6 +122,12 @@ struct ContentView: View {
         .tint(.brand)
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .alert("Some items could not be moved",
+               isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(model.alert ?? "")
+        }
         .confirmationDialog("Empty the Trash?", isPresented: $model.confirmEmpty) {
             Button("Empty Trash", role: .destructive) { model.emptyTrash() }
         } message: {
@@ -455,15 +461,29 @@ struct AppsView: View {
                                     }
                                 }
                             }
+                            if !model.systemParts.isEmpty {
+                                Card {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Label("Also installed background services", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.headline).foregroundStyle(.orange)
+                                        Text("These stay after uninstalling. For a clean removal, use the app's own uninstaller, usually in its menu or settings.")
+                                            .font(.callout).foregroundStyle(.secondary).layoutPriority(1)
+                                        ForEach(model.systemParts, id: \.self) {
+                                            Text($0).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                        }
+                                    }
+                                }
+                            }
                             Spacer()
                             if running {
                                 Label("Quit \(app.name) before uninstalling.", systemImage: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                             }
                             Button { model.confirmUninstall = true } label: {
-                                Label("Uninstall · \(FS.format(total))", systemImage: "trash").frame(maxWidth: .infinity)
+                                Label(model.uninstalling ? "Uninstalling…" : "Uninstall · \(FS.format(total))", systemImage: "trash")
+                                    .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.borderedProminent).controlSize(.large).tint(.red).disabled(running)
+                            .buttonStyle(.borderedProminent).controlSize(.large).tint(.red).disabled(running || model.uninstalling)
                         }
                     } else {
                         ContentUnavailableView("Choose an app", systemImage: "xmark.app",
@@ -481,7 +501,7 @@ struct AppsView: View {
         .confirmationDialog("Uninstall \(model.chosenApp?.name ?? "")?", isPresented: $model.confirmUninstall) {
             Button("Move to Trash", role: .destructive) { model.uninstall() }
         } message: {
-            Text("The app and \(model.leftovers.count) leftover items go to the Trash. You can put them back from there.")
+            Text("The app and \(model.leftovers.count) leftover items go to the Trash. You can put them back from there. If the app was installed by a package, macOS asks for your password.")
         }
     }
 }

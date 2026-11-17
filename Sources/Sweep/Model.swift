@@ -69,6 +69,10 @@ final class Model: ObservableObject {
     @Published var chosenApp: AppInfo? = nil
     @Published var leftovers: [Item] = []
     @Published var confirmUninstall = false
+    @Published var systemParts: [String] = []
+    @Published var uninstalling = false
+    /// Shown as an alert, so a failure is never just a cut-off line in the status bar.
+    @Published var alert: String? = nil
 
     @Published var memUsed: Int64 = 0
     @Published var memTotal: Int64 = 1
@@ -97,15 +101,23 @@ final class Model: ObservableObject {
     func choose(_ id: String?) {
         chosenApp = apps?.first { $0.id == id }
         leftovers = chosenApp.map { Apps.leftovers($0) } ?? []
+        systemParts = chosenApp.map { Apps.systemComponents($0) } ?? []
     }
 
     func uninstall() {
-        guard let app = chosenApp else { return }
-        let r = Cleaner.trash([Item(path: app.path, size: app.size)] + leftovers)
-        report(r, trashed: true)
-        if r.done.contains(app.path) {
-            apps?.removeAll { $0.id == app.id }
-            choose(nil)
+        guard let app = chosenApp, !uninstalling else { return }
+        let items = [Item(path: app.path, size: app.size)] + leftovers
+        uninstalling = true
+        Task.detached {   // off the main thread: Finder's password prompt can wait on the user
+            let r = Cleaner.trash(items)
+            await MainActor.run {
+                self.uninstalling = false
+                self.report(r, trashed: true)
+                if r.done.contains(app.path) {
+                    self.apps?.removeAll { $0.id == app.id }
+                    self.choose(nil)
+                }
+            }
         }
     }
 
@@ -221,7 +233,10 @@ final class Model: ObservableObject {
         var text = trashed
             ? "Moved \(r.done.count) items (\(FS.format(r.freed))) to the Trash. Empty the Trash to free the space."
             : "Removed \(r.done.count) items, freed \(FS.format(r.freed))."
-        if !r.failures.isEmpty { text += " \(r.failures.count) failed: " + r.failures.prefix(2).joined(separator: "; ") }
+        if !r.failures.isEmpty {
+            text += " \(r.failures.count) could not be moved."
+            alert = r.failures.map { $0.replacingOccurrences(of: FS.home, with: "~") }.joined(separator: "\n\n")
+        }
         message = text
         refreshFreeSpace()
     }

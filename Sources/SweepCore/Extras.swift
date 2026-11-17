@@ -95,6 +95,18 @@ public enum Apps {
         }.sorted { $0.size > $1.size }
     }
 
+    /// Background services the app's developer installed system-wide (outside ~/Library). Sweep only reports
+    /// these: removing them safely needs the app's own uninstaller.
+    public static func systemComponents(_ app: AppInfo, roots: [String] = [
+        "/Library/LaunchDaemons", "/Library/LaunchAgents", "/Library/PrivilegedHelperTools",
+    ]) -> [String] {
+        let parts = app.bundleID.lowercased().split(separator: ".")
+        guard parts.count >= 2 else { return [] }
+        let vendor = parts.prefix(2).joined(separator: ".") + "."
+        return roots.flatMap { FS.children($0) }
+            .filter { ($0 as NSString).lastPathComponent.lowercased().hasPrefix(vendor) }
+    }
+
     /// Support files named exactly after the app or its bundle ID. No fuzzy matching.
     public static func leftovers(_ app: AppInfo, home: String = FS.home) -> [Item] {
         let lib = home + "/Library/"

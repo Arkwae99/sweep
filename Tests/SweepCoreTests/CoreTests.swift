@@ -164,3 +164,18 @@ func write(_ path: String, bytes: Int = 10, fill: UInt8 = 7, modified: Date? = n
     #expect(words.isDisjoint(with: ["system", "container", "volume", "--volumes"]))
     #expect(Docker.pruneCommands.contains(["builder", "prune", "-f"]))
 }
+
+@Test func finderTrashScriptQuoting() {
+    #expect(Cleaner.finderTrashScript("/Applications/My \"App\".app")
+            == #"tell application "Finder" to delete (POSIX file "/Applications/My \"App\".app" as alias)"#)
+}
+
+@Test func systemComponentsMatchVendor() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    for f in ["com.teamviewer.Helper.plist", "com.other.thing.plist"] {
+        FileManager.default.createFile(atPath: root + "/" + f, contents: Data())
+    }
+    let app = AppInfo(path: "/Applications/TeamViewer.app", bundleID: "com.teamviewer.TeamViewer", size: 1)
+    #expect(Apps.systemComponents(app, roots: [root]) == [root + "/com.teamviewer.Helper.plist"])
+}

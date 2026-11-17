@@ -113,7 +113,7 @@ public enum Safety {
 public enum Cleaner {
     public static func trash(
         _ items: [Item], home: String = FS.home,
-        mover: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+        mover: (URL) throws -> Void = defaultMover
     ) -> CleanResult {
         var r = CleanResult()
         for item in items {
@@ -130,6 +130,22 @@ public enum Cleaner {
             }
         }
         return r
+    }
+
+    /// Moves to the Trash; if macOS refuses (an app installed by a package is owned by root), asks Finder,
+    /// which shows its own password prompt, exactly like dragging the item to the Trash by hand.
+    public static func defaultMover(_ url: URL) throws {
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        } catch {
+            let r = Shell.run("/usr/bin/osascript", ["-e", finderTrashScript(url.path)])
+            if r.status != 0 { throw error }
+        }
+    }
+
+    public static func finderTrashScript(_ path: String) -> String {
+        let p = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return "tell application \"Finder\" to delete (POSIX file \"\(p)\" as alias)"
     }
 
     /// AppleScript that removes the paths as root. macOS shows the password prompt; we never see it.
