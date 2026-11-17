@@ -150,6 +150,21 @@ final class Model: ObservableObject {
         }
     }
 
+    /// Applies right away (like System Settings), then re-reads the job so the UI shows what is really installed.
+    func setSchedule(_ mode: Schedule.Mode, binary: String) {
+        let result = Schedule.set(mode, binary: binary)
+        scheduleMode = Schedule.current()
+        if scheduleMode != mode { message = result }
+    }
+
+    /// Next automatic run, nil when off.
+    var nextScheduledRun: Date? {
+        guard scheduleMode != .off else { return nil }
+        var when = DateComponents(hour: 12, minute: 0)
+        if scheduleMode == .weekly { when.weekday = 1 }   // Calendar: 1 = Sunday
+        return Calendar.current.nextDate(after: Date(), matching: when, matchingPolicy: .nextTime)
+    }
+
     func refreshFreeSpace() {
         let v = try? URL(fileURLWithPath: "/").resourceValues(
             forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey])

@@ -579,22 +579,31 @@ struct ScheduleView: View {
             Header(section: .schedule) { EmptyView() }
             Card {
                 VStack(alignment: .leading, spacing: 14) {
-                    Picker("Clean automatically", selection: $model.scheduleMode) {
+                    Picker("Clean automatically", selection: Binding(
+                        get: { model.scheduleMode }, set: { model.setSchedule($0, binary: binary) })) {
                         ForEach(Schedule.Mode.allCases, id: \.self) { Text($0.rawValue.capitalized) }
                     }
                     .pickerStyle(.segmented)
-                    Label("Runs at 12:00 (weekly: Sundays).", systemImage: "clock")
+
+                    if let next = model.nextScheduledRun {
+                        Label {
+                            Text("On. Next clean \(next.formatted(.relative(presentation: .named))), \(next.formatted(date: .abbreviated, time: .shortened)).")
+                        } icon: {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        }
+                        .font(.headline)
+                    } else {
+                        Label("Off. Nothing is cleaned automatically.", systemImage: "pause.circle.fill")
+                            .font(.headline).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Label("Runs at 12:00, daily or every Sunday. If the Mac is asleep, it runs when it wakes.", systemImage: "clock")
                     Label("Only app caches, logs and developer tool caches, deleted permanently so the space comes back right away.",
                           systemImage: "checkmark.shield")
                     Label("Large files, duplicates and projects are never touched automatically.", systemImage: "hand.raised")
                     if !binary.hasPrefix("/Applications/") {
                         Label("Move Sweep.app to Applications first, so the schedule keeps working.",
                               systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    }
-                    HStack {
-                        Spacer()
-                        Button("Apply") { model.message = Schedule.set(model.scheduleMode, binary: binary) }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
                     }
                 }
             }
