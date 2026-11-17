@@ -44,7 +44,7 @@ if args.contains("--scan") {
     ]
     for (title, items) in report {
         print("\(title): \(FS.format(items.reduce(0) { $0 + $1.size })) in \(items.count) items")
-        items.prefix(5).forEach { print("  \(FS.format($0.size))\t\($0.path)") }
+        items.forEach { print("  \(FS.format($0.size))\t\($0.path)") }
     }
     exit(0)
 }
