@@ -35,4 +35,7 @@ Swift package with two targets: `SweepCore` (all logic, tested) and `Sweep` (Swi
 - Scheduled cleaning deletes permanently because trashed caches free no space.
 
 ## Testing
-Swift Testing suite for the safety checks, admin script quoting, scanners and cleaner against temporary folders. `Sweep --scan` prints real totals for the non-private locations as a read-only smoke check.
+Swift Testing suite for the safety checks, admin script quoting, scanners and cleaner against temporary folders. `Sweep --scan` prints real totals for the non-private locations as a read-only smoke check. `Sweep --snapshot DIR` saves a PNG of each section for UI checks without Screen Recording permission.
+
+## Build note
+On the macOS 26 SDK, SwiftUI's `@State` is a macro whose plugin ships only with Xcode, so the app keeps all view state in one `ObservableObject` (`Model`) instead.
