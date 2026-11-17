@@ -1,10 +1,10 @@
 #!/bin/bash
-# Builds Sweep.app next to this script. Then drag it into /Applications.
+# Builds Sweep.app inside .build (hidden, so Spotlight lists only one copy) and installs it in /Applications.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 swift build -c release
-APP=Sweep.app
+APP=.build/Sweep.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp AppIcon.icns "$APP/Contents/Resources/"
@@ -32,4 +32,6 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 codesign --force --sign - "$APP"
-echo "Built $(pwd)/$APP"
+pkill -x Sweep || true
+ditto "$APP" /Applications/Sweep.app
+echo "Installed /Applications/Sweep.app"
