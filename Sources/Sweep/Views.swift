@@ -317,12 +317,14 @@ struct ItemsView: View {
                 } actions: {
                     Button("Scan") { model.scan(section) }.buttonStyle(.borderedProminent)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if items.isEmpty {
                 ContentUnavailableView {
                     Label("All clean", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
                 } description: {
                     Text("Nothing to remove here.")
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(items) { item in
                     HStack(spacing: 12) {
@@ -385,6 +387,7 @@ struct ItemsView: View {
             }
         }
         .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .navigationTitle(section.rawValue)
         .confirmationDialog("Delete \(picked.count) system items?", isPresented: $model.confirmAdmin) {
             Button("Delete permanently", role: .destructive) { model.clean(section) }

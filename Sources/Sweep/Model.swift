@@ -234,6 +234,12 @@ extension Model {
                 while busy.contains(s) { try? await Task.sleep(for: .milliseconds(200)) }
                 if let first = items[s]?.first { selected[s] = [first.path] }
             }
+            if s == .overview {   // press Smart Scan, wait up to 3 minutes
+                scanAll()
+                for _ in 0..<900 where Model.cleanable.contains(where: busy.contains) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
             try? await Task.sleep(for: .seconds(s == .apps || s == .docker ? 3 : 1.5))
             if s == .apps, let first = apps?.first { choose(first.id); try? await Task.sleep(for: .seconds(1)) }
             // Render the layer tree: cacheDisplay skips SwiftUI's layer-backed text and controls.
