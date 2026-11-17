@@ -87,7 +87,7 @@ struct ItemsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text(section.blurb).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(section.blurb).foregroundStyle(.secondary)
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
                 Button(model.items[section] == nil ? "Scan" : "Rescan") { model.scan(section) }
