@@ -60,3 +60,7 @@ Sources/Sweep       SwiftUI app and command line entry point
 Tests               Swift Testing suite
 docs                design spec and screenshots
 ```
+
+## License
+
+[MIT](LICENSE)
