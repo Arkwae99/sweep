@@ -574,42 +574,90 @@ struct ScheduleView: View {
     @EnvironmentObject var model: Model
     let binary = Bundle.main.executablePath ?? CommandLine.arguments[0]
 
+    var time: Binding<Date> {
+        Binding(
+            get: { Calendar.current.date(from: DateComponents(hour: model.scheduleDraft.hour, minute: model.scheduleDraft.minute)) ?? Date() },
+            set: {
+                let c = Calendar.current.dateComponents([.hour, .minute], from: $0)
+                model.scheduleDraft.hour = c.hour ?? 12
+                model.scheduleDraft.minute = c.minute ?? 0
+            })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Header(section: .schedule) { EmptyView() }
+
+            // What is actually installed right now.
             Card {
-                VStack(alignment: .leading, spacing: 14) {
-                    Picker("Clean automatically", selection: Binding(
-                        get: { model.scheduleMode }, set: { model.setSchedule($0, binary: binary) })) {
-                        ForEach(Schedule.Mode.allCases, id: \.self) { Text($0.rawValue.capitalized) }
+                if let next = Schedule.nextRun(model.scheduleSaved) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Automatic cleaning is on").font(.headline)
+                            Text("Next clean \(next.formatted(.relative(presentation: .named))), \(next.formatted(date: .complete, time: .shortened)).")
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
+                    }
+                } else {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Automatic cleaning is off").font(.headline)
+                            Text("Nothing is cleaned unless you do it yourself.").foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "pause.circle.fill").font(.title2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            // Settings you can edit freely; nothing changes until Save.
+            Form {
+                Toggle("Clean automatically", isOn: $model.scheduleDraft.on).toggleStyle(.switch)
+                if model.scheduleDraft.on {
+                    Picker("Repeat", selection: $model.scheduleDraft.weekly) {
+                        Text("Every day").tag(false)
+                        Text("Every week").tag(true)
                     }
                     .pickerStyle(.segmented)
-
-                    if let next = model.nextScheduledRun {
-                        Label {
-                            Text("On. Next clean \(next.formatted(.relative(presentation: .named))), \(next.formatted(date: .abbreviated, time: .shortened)).")
-                        } icon: {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    if model.scheduleDraft.weekly {
+                        Picker("Day", selection: $model.scheduleDraft.weekday) {
+                            ForEach(0..<7, id: \.self) { Text(Calendar.current.weekdaySymbols[$0]).tag($0) }
                         }
-                        .font(.headline)
-                    } else {
-                        Label("Off. Nothing is cleaned automatically.", systemImage: "pause.circle.fill")
-                            .font(.headline).foregroundStyle(.secondary)
                     }
-                    Divider()
-                    Label("Runs at 12:00, daily or every Sunday. If the Mac is asleep, it runs when it wakes.", systemImage: "clock")
+                    DatePicker("Time", selection: time, displayedComponents: .hourAndMinute)
+                }
+                SwiftUI.Section {
                     Label("Only app caches, logs and developer tool caches, deleted permanently so the space comes back right away.",
                           systemImage: "checkmark.shield")
-                    Label("Large files, duplicates and projects are never touched automatically.", systemImage: "hand.raised")
+                    Label("Large files, duplicates, projects and Docker are never touched automatically.", systemImage: "hand.raised")
+                    Label("If the Mac is asleep at that time, it runs when it wakes.", systemImage: "moon.zzz")
                     if !binary.hasPrefix("/Applications/") {
                         Label("Move Sweep.app to Applications first, so the schedule keeps working.",
                               systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
                 }
+                .foregroundStyle(.secondary)
             }
-            Spacer()
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .padding(.horizontal, -20)   // grouped forms add their own side margins
+
+            if model.scheduleChanged {
+                HStack(spacing: 10) {
+                    Label("Unsaved changes", systemImage: "pencil.circle.fill").foregroundStyle(.orange)
+                    Spacer()
+                    Button("Revert") { model.scheduleDraft = model.scheduleSaved }.controlSize(.large)
+                    Button("Save") { model.saveSchedule(binary: binary) }
+                        .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut("s")
+                }
+                .padding(12)
+                .background(.bar, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
         }
         .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .navigationTitle("Schedule")
     }
 }

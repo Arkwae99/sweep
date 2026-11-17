@@ -112,34 +112,63 @@ public enum Apps {
 // MARK: Scheduled cleaning
 
 public enum Schedule {
+    /// Presets for `Sweep --schedule off|daily|weekly`.
     public enum Mode: String, CaseIterable, Sendable { case off, daily, weekly }
+
+    public struct Config: Equatable, Sendable {
+        public var on = false
+        public var weekly = true
+        public var weekday = 0   // launchd numbering: 0 = Sunday … 6 = Saturday
+        public var hour = 12
+        public var minute = 0
+
+        public init(on: Bool = false, weekly: Bool = true, weekday: Int = 0, hour: Int = 12, minute: Int = 0) {
+            (self.on, self.weekly, self.weekday, self.hour, self.minute) = (on, weekly, weekday, hour, minute)
+        }
+
+        public init(_ mode: Mode) { self.init(on: mode != .off, weekly: mode != .daily) }
+
+        /// Same schedule in effect: settings hidden while off, or the day while daily, don't count.
+        public func same(as o: Config) -> Bool {
+            on == o.on && (!on || (weekly == o.weekly && hour == o.hour && minute == o.minute && (!weekly || weekday == o.weekday)))
+        }
+    }
 
     public static let label = "com.sweep.autoclean"
     public static var plistPath: String { FS.home + "/Library/LaunchAgents/\(label).plist" }
 
-    public static func plist(binary: String, mode: Mode) -> [String: Any] {
-        var when: [String: Int] = ["Hour": 12, "Minute": 0]
-        if mode == .weekly { when["Weekday"] = 0 }   // launchd: 0 = Sunday, 1 = Monday
+    public static func plist(binary: String, config: Config) -> [String: Any] {
+        var when = ["Hour": config.hour, "Minute": config.minute]
+        if config.weekly { when["Weekday"] = config.weekday }
         return ["Label": label, "ProgramArguments": [binary, "--auto-clean"], "StartCalendarInterval": when]
     }
 
-    public static func current() -> Mode {
-        guard let d = NSDictionary(contentsOfFile: plistPath),
-              let when = d["StartCalendarInterval"] as? [String: Int] else { return .off }
-        return when["Weekday"] == nil ? .daily : .weekly
+    public static func current(path: String = plistPath) -> Config {
+        guard let d = NSDictionary(contentsOfFile: path),
+              let when = d["StartCalendarInterval"] as? [String: Int] else { return Config() }
+        return Config(on: true, weekly: when["Weekday"] != nil, weekday: (when["Weekday"] ?? 0) % 7,
+                      hour: when["Hour"] ?? 12, minute: when["Minute"] ?? 0)
     }
 
-    public static func set(_ mode: Mode, binary: String) -> String {
+    public static func set(_ config: Config, binary: String) -> String {
         let domain = "gui/\(getuid())"
         Shell.run("/bin/launchctl", ["bootout", "\(domain)/\(label)"])
         try? FileManager.default.removeItem(atPath: plistPath)
-        guard mode != .off else { return "Scheduled cleaning is off." }
+        guard config.on else { return "Automatic cleaning is off." }
         try? FileManager.default.createDirectory(atPath: FS.home + "/Library/LaunchAgents", withIntermediateDirectories: true)
-        guard (plist(binary: binary, mode: mode) as NSDictionary).write(toFile: plistPath, atomically: true) else {
+        guard (plist(binary: binary, config: config) as NSDictionary).write(toFile: plistPath, atomically: true) else {
             return "Could not write the schedule file."
         }
         let r = Shell.run("/bin/launchctl", ["bootstrap", domain, plistPath])
-        return r.status == 0 ? "Runs \(mode.rawValue) at 12:00." : "Could not register the schedule. \(r.out)"
+        return r.status == 0 ? "Schedule saved." : "Could not register the schedule. \(r.out)"
+    }
+
+    /// Next run after `now`, nil when off.
+    public static func nextRun(_ c: Config, after now: Date = Date(), calendar: Calendar = .current) -> Date? {
+        guard c.on else { return nil }
+        var when = DateComponents(hour: c.hour, minute: c.minute)
+        if c.weekly { when.weekday = c.weekday + 1 }   // Calendar numbering: 1 = Sunday
+        return calendar.nextDate(after: now, matching: when, matchingPolicy: .nextTime)
     }
 }
 

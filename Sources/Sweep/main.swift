@@ -38,7 +38,7 @@ if let i = args.firstIndex(of: "--trash") {
 
 // `Sweep --schedule off|daily|weekly`: same as Schedule → Apply in the window.
 if let i = args.firstIndex(of: "--schedule"), i + 1 < args.count, let mode = Schedule.Mode(rawValue: args[i + 1]) {
-    print(Schedule.set(mode, binary: Bundle.main.executablePath ?? args[0]))
+    print(Schedule.set(.init(mode), binary: Bundle.main.executablePath ?? args[0]))
     exit(0)
 }
 

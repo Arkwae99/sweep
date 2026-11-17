@@ -134,10 +134,29 @@ func write(_ path: String, bytes: Int = 10, fill: UInt8 = 7, modified: Date? = n
 }
 
 @Test func schedulePlist() {
-    let weekly = Schedule.plist(binary: "/x/Sweep", mode: .weekly)
+    let weekly = Schedule.plist(binary: "/x/Sweep", config: .init(on: true, weekly: true, weekday: 3, hour: 9, minute: 30))
     #expect(weekly["ProgramArguments"] as? [String] == ["/x/Sweep", "--auto-clean"])
-    #expect((weekly["StartCalendarInterval"] as? [String: Int])?["Weekday"] == 0)   // Sunday
-    #expect((Schedule.plist(binary: "/x", mode: .daily)["StartCalendarInterval"] as? [String: Int])?["Weekday"] == nil)
+    #expect(weekly["StartCalendarInterval"] as? [String: Int] == ["Weekday": 3, "Hour": 9, "Minute": 30])
+    #expect((Schedule.plist(binary: "/x", config: .init(.daily))["StartCalendarInterval"] as? [String: Int])?["Weekday"] == nil)
+    #expect(Schedule.Config(.weekly).weekday == 0)   // preset: Sunday 12:00
+}
+
+@Test func scheduleRoundTripAndNextRun() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let path = dir.appendingPathComponent("s.plist").path
+    let c = Schedule.Config(on: true, weekly: true, weekday: 5, hour: 18, minute: 45)
+    #expect((Schedule.plist(binary: "/x", config: c) as NSDictionary).write(toFile: path, atomically: true))
+    #expect(Schedule.current(path: path) == c)
+    #expect(Schedule.current(path: dir.appendingPathComponent("missing").path).on == false)
+
+    var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+    let tue = cal.date(from: DateComponents(year: 2026, month: 11, day: 17, hour: 20))!   // Tuesday
+    let next = try #require(Schedule.nextRun(c, after: tue, calendar: cal))
+    #expect(cal.dateComponents([.weekday, .hour, .minute, .day], from: next) == DateComponents(day: 20, hour: 18, minute: 45, weekday: 6))  // Friday
+    #expect(Schedule.nextRun(.init(), after: tue, calendar: cal) == nil)
+    #expect(Schedule.Config(on: false, weekly: false, hour: 3).same(as: Schedule.Config()))   // off == off
+    #expect(!Schedule.Config(on: true, weekly: true, weekday: 1).same(as: .init(on: true, weekly: true, weekday: 2)))
 }
 
 @Test func dockerPruneNeverTouchesContainersOrVolumes() {

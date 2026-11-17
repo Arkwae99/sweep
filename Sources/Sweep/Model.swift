@@ -79,7 +79,8 @@ final class Model: ObservableObject {
     @Published var dockerBusy = false
     @Published var confirmPrune = false
 
-    @Published var scheduleMode = Schedule.current()
+    @Published var scheduleSaved = Schedule.current()
+    @Published var scheduleDraft = Schedule.current()
 
     init() { refreshFreeSpace() }
 
@@ -150,19 +151,14 @@ final class Model: ObservableObject {
         }
     }
 
-    /// Applies right away (like System Settings), then re-reads the job so the UI shows what is really installed.
-    func setSchedule(_ mode: Schedule.Mode, binary: String) {
-        let result = Schedule.set(mode, binary: binary)
-        scheduleMode = Schedule.current()
-        if scheduleMode != mode { message = result }
-    }
+    var scheduleChanged: Bool { !scheduleDraft.same(as: scheduleSaved) }
 
-    /// Next automatic run, nil when off.
-    var nextScheduledRun: Date? {
-        guard scheduleMode != .off else { return nil }
-        var when = DateComponents(hour: 12, minute: 0)
-        if scheduleMode == .weekly { when.weekday = 1 }   // Calendar: 1 = Sunday
-        return Calendar.current.nextDate(after: Date(), matching: when, matchingPolicy: .nextTime)
+    /// Writes the draft, then re-reads what is really installed so the status line never lies.
+    func saveSchedule(binary: String) {
+        let result = Schedule.set(scheduleDraft, binary: binary)
+        scheduleSaved = Schedule.current()
+        if scheduleSaved.same(as: scheduleDraft) { scheduleDraft = scheduleSaved }
+        message = result
     }
 
     func refreshFreeSpace() {
@@ -257,6 +253,7 @@ extension Model {
             }
             try? await Task.sleep(for: .seconds(s == .apps || s == .docker ? 3 : 1.5))
             if s == .apps, let first = apps?.first { choose(first.id); try? await Task.sleep(for: .seconds(1)) }
+            if s == .schedule { scheduleDraft.hour = 9; try? await Task.sleep(for: .seconds(0.5)) }   // unsaved, never written
             // Render the layer tree: cacheDisplay skips SwiftUI's layer-backed text and controls.
             guard let window = NSApp.windows.first(where: { $0.isVisible }),
                   let view = window.contentView?.superview, let layer = view.layer,
