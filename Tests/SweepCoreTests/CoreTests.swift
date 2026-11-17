@@ -126,6 +126,17 @@ func write(_ path: String, bytes: Int = 10, fill: UInt8 = 7, modified: Date? = n
     #expect(Apps.leftovers(app, home: h).map(\.name).sorted() == ["com.foo.app", "com.foo.app.plist"])
 }
 
+@Test func leftoversKeptWhenAnotherCopySharesBundleID() throws {
+    let h = try makeHome()
+    try write(h + "/Library/Caches/com.foo.app/a")
+    let app = AppInfo(path: "/Applications/Foo.app", bundleID: "com.foo.app", size: 0)
+    let copy = AppInfo(path: "/Applications/Foo Copy.app", bundleID: "com.foo.app", size: 0)
+    let other = AppInfo(path: "/Applications/Bar.app", bundleID: "com.bar.app", size: 0)
+    #expect(Apps.leftovers(app, home: h, installed: [app, copy, other]).isEmpty)
+    #expect(Apps.sharing(app, in: [app, copy, other]).map(\.name) == ["Foo Copy"])
+    #expect(Apps.leftovers(app, home: h, installed: [app, other]).map(\.name) == ["com.foo.app"])
+}
+
 @Test func psParsing() {
     let procs = Memory.parsePS("  123  2048 /Applications/My App.app/Contents/MacOS/My App\n 9 10 /bin/zsh\nbad line")
     #expect(procs.count == 2)

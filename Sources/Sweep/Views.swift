@@ -453,6 +453,10 @@ struct AppsView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     LabeledContent("App", value: FS.format(app.size))
                                     LabeledContent("Leftover files", value: model.loadingLeftovers ? "Looking…" : "\(model.leftovers.count)")
+                                    if !model.sharedWith.isEmpty {
+                                        Text("Same app as \(model.sharedWith.joined(separator: ", ")), so its settings and data stay.")
+                                            .font(.caption).foregroundStyle(.secondary).layoutPriority(1)
+                                    }
                                     ForEach(model.leftovers) { item in
                                         HStack {
                                             Text(item.path.replacingOccurrences(of: FS.home, with: "~"))

@@ -70,6 +70,7 @@ final class Model: ObservableObject {
     @Published var leftovers: [Item] = []
     @Published var confirmUninstall = false
     @Published var systemParts: [String] = []
+    @Published var sharedWith: [String] = []   // other copies of the chosen app; their files stay
     @Published var uninstalling = false
     @Published var loadingLeftovers = false
     @Published var savingSchedule = false
@@ -104,12 +105,15 @@ final class Model: ObservableObject {
         chosenApp = apps?.first { $0.id == id }
         leftovers = []
         systemParts = []
+        sharedWith = []
         guard let app = chosenApp else { loadingLeftovers = false; return }
         loadingLeftovers = true
+        let installed = apps ?? []
         Task.detached {   // sizing Containers can take seconds; keep the window responsive
-            let left = Apps.leftovers(app), parts = Apps.systemComponents(app)
+            let left = Apps.leftovers(app, installed: installed), parts = Apps.systemComponents(app)
             await MainActor.run {
                 guard self.chosenApp?.id == app.id else { return }   // user picked another app meanwhile
+                self.sharedWith = Apps.sharing(app, in: installed).map(\.name)
                 self.leftovers = left
                 self.systemParts = parts
                 self.loadingLeftovers = false

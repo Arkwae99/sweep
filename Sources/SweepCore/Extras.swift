@@ -119,8 +119,15 @@ public enum Apps {
             .filter { ($0 as NSString).lastPathComponent.lowercased().hasPrefix(vendor) }
     }
 
+    /// Other installed copies of the same app (same bundle ID, different path). They share its support files.
+    public static func sharing(_ app: AppInfo, in installed: [AppInfo]) -> [AppInfo] {
+        installed.filter { $0.bundleID == app.bundleID && $0.path != app.path }
+    }
+
     /// Support files named exactly after the app or its bundle ID. No fuzzy matching.
-    public static func leftovers(_ app: AppInfo, home: String = FS.home) -> [Item] {
+    /// None when another installed copy shares the bundle ID: those files are still in use.
+    public static func leftovers(_ app: AppInfo, home: String = FS.home, installed: [AppInfo] = []) -> [Item] {
+        guard sharing(app, in: installed).isEmpty else { return [] }
         let lib = home + "/Library/"
         return [
             "Application Support/\(app.name)", "Application Support/\(app.bundleID)",
