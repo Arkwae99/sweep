@@ -11,6 +11,7 @@ Swift package with two targets: `SweepCore` (all logic, tested) and `Sweep` (Swi
 ## Sections
 | Section | Scans | Removal |
 |---|---|---|
+| Overview | Disk usage ring, Smart Scan runs every Clean section at once | n/a |
 | System junk | `~/Library/Caches/*`, `~/Library/Logs/*` over 1 MB | Trash |
 | Developer junk | npm, yarn, pnpm, bun, gradle, cargo caches, `~/.cache/*`, Xcode DerivedData, simulator caches; `node_modules`, `.next`, `DerivedData` under `~/Projects` in projects untouched 30+ days | Trash |
 | Large & old files | Downloads, Desktop, Documents: files over 100 MB, or over 10 MB and not opened in 180 days | Trash |
