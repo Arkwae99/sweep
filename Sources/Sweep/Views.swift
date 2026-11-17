@@ -563,7 +563,7 @@ struct DockerView: View {
         .confirmationDialog("Prune Docker?", isPresented: $model.confirmPrune) {
             Button("Prune", role: .destructive) { model.pruneDocker() }
         } message: {
-            Text("Stopped containers, unused networks, dangling images and build cache are deleted permanently.")
+            Text("Build cache and images no container uses are deleted permanently. Docker downloads images again when a project needs them. Containers and volumes are kept.")
         }
     }
 }

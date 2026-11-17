@@ -19,7 +19,7 @@ Swift package with two targets: `SweepCore` (all logic, tested) and `Sweep` (Swi
 | System-wide caches | `/Library/Caches/*`, `/Library/Logs/*` | Permanent, via the macOS admin password prompt |
 | Uninstall apps | Apps in `/Applications` and `~/Applications` plus exact-match leftovers in `~/Library` | Trash |
 | Memory | Used/total RAM, top processes, Quit button, admin `purge` | n/a |
-| Docker | `docker system df`; `docker system prune -f` | Permanent, confirmed |
+| Docker | `docker system df`; `docker builder prune -f` and `docker image prune -a -f` (never containers or volumes) | Permanent, confirmed |
 | Schedule | Off, daily or weekly launchd job running `Sweep --auto-clean` | Permanent, caches and logs only |
 
 ## Safety rules

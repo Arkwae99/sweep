@@ -60,10 +60,18 @@ public enum Docker {
         return r.status == 0 ? r.out : "Docker is not running.\n\(r.out)"
     }
 
-    /// Removes stopped containers, unused networks, dangling images and build cache. Volumes are kept.
+    /// Build cache and images no container uses. Never containers or volumes: those can hold databases.
+    public static let pruneCommands = [["builder", "prune", "-f"], ["image", "prune", "-a", "-f"]]
+
     public static func prune() -> String {
         guard let bin = binary else { return "Docker is not installed." }
-        return Shell.run(bin, ["system", "prune", "-f"]).out
+        let totals = pruneCommands.map { args -> String in
+            let r = Shell.run(bin, args)
+            let last = r.out.split(separator: "\n").last { $0.contains("Total") }.map(String.init) ?? r.out
+            return last.components(separatedBy: CharacterSet(charactersIn: ":\t")).last?
+                .trimmingCharacters(in: .whitespaces) ?? "?"
+        }
+        return "Docker freed \(totals[0]) of build cache and \(totals[1]) of unused images."
     }
 }
 
@@ -111,7 +119,7 @@ public enum Schedule {
 
     public static func plist(binary: String, mode: Mode) -> [String: Any] {
         var when: [String: Int] = ["Hour": 12, "Minute": 0]
-        if mode == .weekly { when["Weekday"] = 1 }
+        if mode == .weekly { when["Weekday"] = 0 }   // launchd: 0 = Sunday, 1 = Monday
         return ["Label": label, "ProgramArguments": [binary, "--auto-clean"], "StartCalendarInterval": when]
     }
 

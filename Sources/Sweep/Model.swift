@@ -33,7 +33,7 @@ enum Section: String, CaseIterable, Identifiable {
         case .admin: "Caches and logs shared by all users in /Library. Deleted permanently; macOS asks for your password."
         case .apps: "Remove an app together with the support files it leaves in your Library."
         case .memory: "macOS uses spare memory for caching on purpose. Quitting heavy apps frees real memory."
-        case .docker: "Removes stopped containers, unused networks, dangling images and build cache. Volumes are kept."
+        case .docker: "Removes build cache and images no container uses. Containers and volumes, where databases live, are never touched."
         case .schedule: "Clear caches and logs automatically, so the space comes back without thinking about it."
         case .overview: "See how full your disk is and scan everything at once."
         }
@@ -144,7 +144,7 @@ final class Model: ObservableObject {
         Task.detached {
             let text = Docker.prune()
             await MainActor.run {
-                self.message = text.split(separator: "\n").last.map(String.init) ?? "Docker pruned."
+                self.message = text
                 self.loadDocker()
             }
         }

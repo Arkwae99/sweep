@@ -136,6 +136,12 @@ func write(_ path: String, bytes: Int = 10, fill: UInt8 = 7, modified: Date? = n
 @Test func schedulePlist() {
     let weekly = Schedule.plist(binary: "/x/Sweep", mode: .weekly)
     #expect(weekly["ProgramArguments"] as? [String] == ["/x/Sweep", "--auto-clean"])
-    #expect((weekly["StartCalendarInterval"] as? [String: Int])?["Weekday"] == 1)
+    #expect((weekly["StartCalendarInterval"] as? [String: Int])?["Weekday"] == 0)   // Sunday
     #expect((Schedule.plist(binary: "/x", mode: .daily)["StartCalendarInterval"] as? [String: Int])?["Weekday"] == nil)
+}
+
+@Test func dockerPruneNeverTouchesContainersOrVolumes() {
+    let words = Set(Docker.pruneCommands.joined())
+    #expect(words.isDisjoint(with: ["system", "container", "volume", "--volumes"]))
+    #expect(Docker.pruneCommands.contains(["builder", "prune", "-f"]))
 }
