@@ -27,6 +27,15 @@ if args.contains("--auto-clean") {
     exit(0)
 }
 
+// `Sweep --trash PATH...`: same safety gate and Trash move as the window's "Move to Trash".
+if let i = args.firstIndex(of: "--trash") {
+    let items = args[(i + 1)...].map { Item(path: $0, size: FS.size($0)) }
+    let r = Cleaner.trash(items)
+    print("Moved \(r.done.count) items (\(FS.format(r.freed))) to the Trash.")
+    r.failures.forEach { print("  failed: \($0)") }
+    exit(r.failures.isEmpty ? 0 : 1)
+}
+
 if args.contains("--scan") {
     let projects = FS.home + "/Projects"
     let report: [(String, [Item])] = [
