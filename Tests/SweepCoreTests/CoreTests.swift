@@ -179,3 +179,126 @@ func write(_ path: String, bytes: Int = 10, fill: UInt8 = 7, modified: Date? = n
     let app = AppInfo(path: "/Applications/TeamViewer.app", bundleID: "com.teamviewer.TeamViewer", size: 1)
     #expect(Apps.systemComponents(app, roots: [root]) == [root + "/com.teamviewer.Helper.plist"])
 }
+
+@Test func quitStopsAProcess() throws {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    p.arguments = ["30"]
+    try p.run()
+    Memory.quit(p.processIdentifier)
+    p.waitUntilExit()
+    #expect(p.terminationReason == .uncaughtSignal && p.terminationStatus == SIGTERM)
+}
+
+@Test func uninstallFlowMovesAppAndLeftovers() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    let app = home + "/Applications/Demo.app"
+    try FileManager.default.createDirectory(atPath: app + "/Contents", withIntermediateDirectories: true)
+    #expect((["CFBundleIdentifier": "com.demo.app"] as NSDictionary).write(toFile: app + "/Contents/Info.plist", atomically: true))
+    try FileManager.default.createDirectory(atPath: home + "/Library/Caches/com.demo.app", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: home + "/Library/Caches/com.other.app", withIntermediateDirectories: true)
+
+    let found = try #require(Apps.list(dirs: [home + "/Applications"]).first)
+    #expect(found.bundleID == "com.demo.app" && found.name == "Demo")
+    let left = Apps.leftovers(found, home: home)
+    #expect(left.map(\.path) == [home + "/Library/Caches/com.demo.app"])   // never the other app's cache
+
+    var moved: [String] = []
+    let r = Cleaner.trash([Item(path: found.path, size: found.size)] + left, home: home) { moved.append($0.path) }
+    #expect(r.failures.isEmpty && Set(moved) == [app, home + "/Library/Caches/com.demo.app"])
+}
+
+@Test func moverFailureIsReportedNotHidden() {
+    struct Denied: Error {}
+    let r = Cleaner.trash([Item(path: "/Users/x/Downloads/a.bin", size: 5)], home: "/Users/x") { _ in throw Denied() }
+    #expect(r.done.isEmpty && r.freed == 0 && r.failures.count == 1)
+}
+
+@Test func dockerReclaimedParsing() {
+    #expect(Docker.reclaimed("ID\tRECLAIMABLE\nabc\ttrue\nTotal:\t21.22GB\n") == "21.22GB")
+    #expect(Docker.reclaimed("Deleted Images:\nuntagged: x\n\nTotal reclaimed space: 2.338GB\n") == "2.338GB")
+    #expect(Docker.reclaimed("") == "0B")
+}
+
+@Test func schedulePlistLogsAndLastRun() throws {
+    let p = Schedule.plist(binary: "/x", config: .init(.weekly))
+    #expect(p["StandardOutPath"] as? String == Schedule.logPath)
+    let log = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    try "old\n2026-11-22 Sweep auto-clean freed 300 MB, 4 items, 0 failures\n  failed: x\n".write(toFile: log, atomically: true, encoding: .utf8)
+    #expect(Schedule.lastRun(path: log) == "2026-11-22 Sweep auto-clean freed 300 MB, 4 items, 0 failures")
+    #expect(Schedule.lastRun(path: log + ".missing") == nil)
+}
+
+// MARK: Review fixes
+
+@Test func duplicatesNeverAllCopies() {
+    let all = [Item(path: "/a", size: 1, group: "g1"), Item(path: "/b", size: 1, group: "g1"),
+               Item(path: "/c", size: 1, group: "g2"), Item(path: "/d", size: 1, group: "g2")]
+    #expect(Scan.wholeGroups([all[1], all[3]], of: all).isEmpty)      // one copy of each kept
+    #expect(Scan.wholeGroups([all[0], all[1], all[3]], of: all) == ["g1"])
+}
+
+@Test func uninstallKeepsLeftoversWhenAppFails() {
+    struct Cancelled: Error {}
+    let h = "/Users/x", app = Item(path: "/Users/x/Applications/A.app", size: 10)
+    let left = [Item(path: "/Users/x/Library/Caches/com.a", size: 5)]
+    var moved: [String] = []
+    let failed = Cleaner.uninstall(app: app, leftovers: left, home: h) { url in
+        if url.path.hasSuffix(".app") { throw Cancelled() }
+        moved.append(url.path)
+    }
+    #expect(moved.isEmpty && failed.done.isEmpty && failed.failures.count == 1)
+    let ok = Cleaner.uninstall(app: app, leftovers: left, home: h) { moved.append($0.path) }
+    #expect(ok.done == [app.path, left[0].path] && ok.freed == 15)
+}
+
+
+@Test func moverGetsTheCheckedPath() {
+    var got: [String] = []
+    _ = Cleaner.trash([Item(path: "/Users/x/Downloads/a/../b.bin", size: 1)], home: "/Users/x") { got.append($0.path) }
+    #expect(got == ["/Users/x/Downloads/b.bin"])
+}
+
+@Test func autoCleanSkipsDotCache() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    try FileManager.default.createDirectory(atPath: home + "/.cache/models", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: home + "/.npm/_cacache", withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: home + "/.cache/models/m.bin", contents: Data(count: 4096))
+    FileManager.default.createFile(atPath: home + "/.npm/_cacache/x", contents: Data(count: 4096))
+    let auto = Scan.devCaches(home: home, minSize: 0, includeDotCache: false).map(\.path)
+    #expect(auto == [home + "/.npm/_cacache"])
+    #expect(Scan.devCaches(home: home, minSize: 0).map(\.path).contains(home + "/.cache/models"))   // still offered for review
+    _ = AutoClean.run(home: home, running: [])
+    #expect(FileManager.default.fileExists(atPath: home + "/.cache/models/m.bin"))
+}
+
+@Test func hardLinksAreNotDuplicates() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let data = Data(repeating: 7, count: 2048)
+    FileManager.default.createFile(atPath: dir + "/a.bin", contents: data)
+    try FileManager.default.linkItem(atPath: dir + "/a.bin", toPath: dir + "/a-link.bin")
+    #expect(Scan.duplicates([dir], minSize: 1).isEmpty)
+    FileManager.default.createFile(atPath: dir + "/a-copy.bin", contents: data)
+    #expect(Scan.duplicates([dir], minSize: 1).count == 2)
+}
+
+@Test func adminDeleteTreatsGoneItemsAsDoneWithoutSpace() {
+    let r = Cleaner.adminDelete([Item(path: "/Library/Caches/sweep-test-\(UUID().uuidString)", size: 99)])
+    #expect(r.done.count == 1 && r.freed == 0 && r.failures.isEmpty)
+}
+
+@Test func iCloudRowsAreLabelled() {
+    let f = FileInfo(path: "/x", size: 1, accessed: .distantPast, created: .distantPast, iCloud: true)
+    #expect(Scan.iCloudNote(f).contains("all devices"))
+    #expect(Scan.iCloudNote(FileInfo(path: "/x", size: 1, accessed: .distantPast, created: .distantPast)).isEmpty)
+}
+
+@Test func logIsTrimmedAndOutsideCleanedLogs() throws {
+    #expect(!Schedule.logPath.contains("/Library/Logs/"))
+    let log = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    try (1...500).map(String.init).joined(separator: "\n").write(toFile: log, atomically: true, encoding: .utf8)
+    Schedule.trimLog(path: log, keep: 200)
+    let lines = try String(contentsOfFile: log, encoding: .utf8).split(separator: "\n")
+    #expect(lines.count == 200 && lines.last == "500")
+}

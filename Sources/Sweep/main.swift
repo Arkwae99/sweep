@@ -21,6 +21,7 @@ func runningIDs() -> Set<String> {
 }
 
 if args.contains("--auto-clean") {
+    Schedule.trimLog()
     let r = AutoClean.run(running: runningIDs())
     print("\(Date()) Sweep auto-clean freed \(FS.format(r.freed)), \(r.done.count) items, \(r.failures.count) failures")
     r.failures.forEach { print("  failed: \($0)") }

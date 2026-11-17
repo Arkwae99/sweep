@@ -65,13 +65,25 @@ public enum Docker {
 
     public static func prune() -> String {
         guard let bin = binary else { return "Docker is not installed." }
-        let totals = pruneCommands.map { args -> String in
+        let names = ["build cache", "unused images"]
+        var parts: [String] = []
+        for (args, name) in zip(pruneCommands, names) {
             let r = Shell.run(bin, args)
-            let last = r.out.split(separator: "\n").last { $0.contains("Total") }.map(String.init) ?? r.out
-            return last.components(separatedBy: CharacterSet(charactersIn: ":\t")).last?
-                .trimmingCharacters(in: .whitespaces) ?? "?"
+            guard r.status == 0 else {
+                let done = parts.isEmpty ? "Nothing was removed" : "Freed " + parts.joined(separator: " and ")
+                return "\(done); Docker could not remove \(name) (is it running?)."
+            }
+            parts.append("\(reclaimed(r.out)) of \(name)")
         }
-        return "Docker freed \(totals[0]) of build cache and \(totals[1]) of unused images."
+        return "Docker freed " + parts.joined(separator: " and ") + "."
+    }
+
+    /// The size on Docker's "Total:" / "Total reclaimed space:" line; "0B" when nothing was removed.
+    public static func reclaimed(_ output: String) -> String {
+        guard let line = output.split(separator: "\n").last(where: { $0.hasPrefix("Total") }),
+              let value = line.split(whereSeparator: { $0 == ":" || $0 == "\t" || $0 == " " }).last
+        else { return "0B" }
+        return String(value)
     }
 }
 
@@ -148,11 +160,28 @@ public enum Schedule {
 
     public static let label = "com.sweep.autoclean"
     public static var plistPath: String { FS.home + "/Library/LaunchAgents/\(label).plist" }
+    /// Outside ~/Library/Logs on purpose: that folder is what System junk cleans.
+    public static var logPath: String { FS.home + "/Library/Application Support/Sweep/auto-clean.log" }
+
+    /// Keeps the log to its last lines so it never grows without limit.
+    public static func trimLog(path: String = logPath, keep: Int = 200) {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.count > keep else { return }
+        try? lines.suffix(keep).joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// Last line the scheduled job wrote, e.g. "2026-11-22 05:00:01 +0000 Sweep auto-clean freed 300 MB, …".
+    public static func lastRun(path: String = logPath) -> String? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        return text.split(separator: "\n").last { $0.contains("auto-clean freed") }.map(String.init)
+    }
 
     public static func plist(binary: String, config: Config) -> [String: Any] {
         var when = ["Hour": config.hour, "Minute": config.minute]
         if config.weekly { when["Weekday"] = config.weekday }
-        return ["Label": label, "ProgramArguments": [binary, "--auto-clean"], "StartCalendarInterval": when]
+        return ["Label": label, "ProgramArguments": [binary, "--auto-clean"], "StartCalendarInterval": when,
+                "StandardOutPath": logPath, "StandardErrorPath": logPath]
     }
 
     public static func current(path: String = plistPath) -> Config {
@@ -168,11 +197,21 @@ public enum Schedule {
         try? FileManager.default.removeItem(atPath: plistPath)
         guard config.on else { return "Automatic cleaning is off." }
         try? FileManager.default.createDirectory(atPath: FS.home + "/Library/LaunchAgents", withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: (logPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         guard (plist(binary: binary, config: config) as NSDictionary).write(toFile: plistPath, atomically: true) else {
             return "Could not write the schedule file."
         }
-        let r = Shell.run("/bin/launchctl", ["bootstrap", domain, plistPath])
-        return r.status == 0 ? "Schedule saved." : "Could not register the schedule. \(r.out)"
+        // bootout finishes asynchronously, so bootstrap can briefly fail with "Input/output error".
+        var r = Shell.run("/bin/launchctl", ["bootstrap", domain, plistPath])
+        for _ in 0..<5 where r.status != 0 {
+            usleep(300_000)
+            r = Shell.run("/bin/launchctl", ["bootstrap", domain, plistPath])
+        }
+        guard r.status == 0 else {
+            try? FileManager.default.removeItem(atPath: plistPath)   // so the app shows "off", not a schedule that isn't loaded
+            return "Could not register the schedule. \(r.out)"
+        }
+        return "Schedule saved."
     }
 
     /// Next run after `now`, nil when off.
@@ -187,7 +226,8 @@ public enum Schedule {
 public enum AutoClean {
     /// Headless run for the schedule: caches and logs only, deleted permanently.
     public static func run(home: String = FS.home, running: Set<String>) -> CleanResult {
-        let items = Scan.systemJunk(home: home, running: running) + Scan.devCaches(home: home)
+        // Unattended, so only known package-manager caches: never arbitrary ~/.cache contents.
+        let items = Scan.systemJunk(home: home, running: running) + Scan.devCaches(home: home, includeDotCache: false)
         return Cleaner.trash(items, home: home) { try FileManager.default.removeItem(at: $0) }
     }
 }

@@ -90,7 +90,7 @@ public enum Shell {
 
 /// The only gate between a scan result and a deletion. Everything destructive passes through here.
 public enum Safety {
-    static func std(_ p: String) -> String { URL(fileURLWithPath: p).standardizedFileURL.path }
+    public static func std(_ p: String) -> String { URL(fileURLWithPath: p).standardizedFileURL.path }
 
     public static func canTrash(_ path: String, home: String = FS.home) -> Bool {
         let p = std(path), h = std(home)
@@ -122,7 +122,7 @@ public enum Cleaner {
                 continue
             }
             do {
-                try mover(URL(fileURLWithPath: item.path))
+                try mover(URL(fileURLWithPath: Safety.std(item.path)))   // act on the path the gate checked
                 r.freed += item.size
                 r.done.append(item.path)
             } catch {
@@ -138,9 +138,26 @@ public enum Cleaner {
         do {
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
         } catch {
+            // Finder resolves symlinks, so never hand it one. macOS reports root-owned items with varying
+            // error codes, so any other failure on a real item gets the Finder (password prompt) retry.
+            let isLink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+            guard !isLink, FileManager.default.fileExists(atPath: url.path) else { throw error }
             let r = Shell.run("/usr/bin/osascript", ["-e", finderTrashScript(url.path)])
             if r.status != 0 { throw error }
         }
+    }
+
+    /// The app first; its leftovers only if the app really went, so a cancelled password prompt
+    /// never leaves an installed app with its settings and data gone.
+    public static func uninstall(app: Item, leftovers: [Item], home: String = FS.home,
+                                 mover: (URL) throws -> Void = defaultMover) -> CleanResult {
+        var r = trash([app], home: home, mover: mover)
+        guard r.done.contains(app.path) else { return r }
+        let rest = trash(leftovers, home: home, mover: mover)
+        r.done += rest.done
+        r.freed += rest.freed
+        r.failures += rest.failures
+        return r
     }
 
     public static func finderTrashScript(_ path: String) -> String {
@@ -159,19 +176,22 @@ public enum Cleaner {
 
     public static func adminDelete(_ items: [Item]) -> CleanResult {
         var r = CleanResult()
-        let allowed = items.filter { Safety.canAdminDelete($0.path) }
+        // Items already gone are done (they leave the list) but free nothing.
+        let gone = items.filter { Safety.canAdminDelete($0.path) && !FileManager.default.fileExists(atPath: $0.path) }
+        let allowed = items.filter { Safety.canAdminDelete($0.path) && FileManager.default.fileExists(atPath: $0.path) }
+        r.done = gone.map(\.path)
         r.failures = items.filter { !Safety.canAdminDelete($0.path) }.map { "\($0.path): not an allowed system location" }
         guard !allowed.isEmpty else { return r }
-        let res = Shell.run("/usr/bin/osascript", ["-e", adminScript(allowed.map(\.path))])
+        let res = Shell.run("/usr/bin/osascript", ["-e", adminScript(allowed.map { Safety.std($0.path) })])
         for item in allowed {
-            if FileManager.default.fileExists(atPath: item.path) {
+            if FileManager.default.fileExists(atPath: Safety.std(item.path)) {
                 r.failures.append("\(item.path): not removed")
             } else {
                 r.freed += item.size
                 r.done.append(item.path)
             }
         }
-        if res.status != 0 && r.done.isEmpty { r.failures = ["Cancelled or failed. \(res.out)"] }
+        if res.status != 0 && r.done.count == gone.count { r.failures.append("Cancelled or failed. \(res.out)") }
         return r
     }
 }

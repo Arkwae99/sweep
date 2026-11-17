@@ -71,6 +71,8 @@ final class Model: ObservableObject {
     @Published var confirmUninstall = false
     @Published var systemParts: [String] = []
     @Published var uninstalling = false
+    @Published var loadingLeftovers = false
+    @Published var savingSchedule = false
     /// Shown as an alert, so a failure is never just a cut-off line in the status bar.
     @Published var alert: String? = nil
 
@@ -100,22 +102,33 @@ final class Model: ObservableObject {
 
     func choose(_ id: String?) {
         chosenApp = apps?.first { $0.id == id }
-        leftovers = chosenApp.map { Apps.leftovers($0) } ?? []
-        systemParts = chosenApp.map { Apps.systemComponents($0) } ?? []
+        leftovers = []
+        systemParts = []
+        guard let app = chosenApp else { loadingLeftovers = false; return }
+        loadingLeftovers = true
+        Task.detached {   // sizing Containers can take seconds; keep the window responsive
+            let left = Apps.leftovers(app), parts = Apps.systemComponents(app)
+            await MainActor.run {
+                guard self.chosenApp?.id == app.id else { return }   // user picked another app meanwhile
+                self.leftovers = left
+                self.systemParts = parts
+                self.loadingLeftovers = false
+            }
+        }
     }
 
     func uninstall() {
-        guard let app = chosenApp, !uninstalling else { return }
+        guard let app = chosenApp, !uninstalling, !loadingLeftovers else { return }
         let items = [Item(path: app.path, size: app.size)] + leftovers
         uninstalling = true
         Task.detached {   // off the main thread: Finder's password prompt can wait on the user
-            let r = Cleaner.trash(items)
+            let r = Cleaner.uninstall(app: items[0], leftovers: Array(items.dropFirst()))
             await MainActor.run {
                 self.uninstalling = false
                 self.report(r, trashed: true)
                 if r.done.contains(app.path) {
                     self.apps?.removeAll { $0.id == app.id }
-                    self.choose(nil)
+                    if self.chosenApp?.id == app.id { self.choose(nil) }
                 }
             }
         }
@@ -145,6 +158,7 @@ final class Model: ObservableObject {
     // MARK: Docker
 
     func loadDocker() {
+        guard !dockerBusy else { return }   // a prune is running; it refreshes when done
         dockerBusy = true
         Task.detached {
             let text = Docker.usage()
@@ -158,6 +172,7 @@ final class Model: ObservableObject {
             let text = Docker.prune()
             await MainActor.run {
                 self.message = text
+                self.dockerBusy = false
                 self.loadDocker()
             }
         }
@@ -167,10 +182,18 @@ final class Model: ObservableObject {
 
     /// Writes the draft, then re-reads what is really installed so the status line never lies.
     func saveSchedule(binary: String) {
-        let result = Schedule.set(scheduleDraft, binary: binary)
-        scheduleSaved = Schedule.current()
-        if scheduleSaved.same(as: scheduleDraft) { scheduleDraft = scheduleSaved }
-        message = result
+        guard !savingSchedule else { return }
+        savingSchedule = true
+        let draft = scheduleDraft
+        Task.detached {   // launchctl (and its retries) must not freeze the window
+            let result = Schedule.set(draft, binary: binary)
+            let saved = Schedule.current()
+            await MainActor.run {
+                self.scheduleSaved = saved
+                self.message = result
+                self.savingSchedule = false
+            }
+        }
     }
 
     func refreshFreeSpace() {
@@ -216,6 +239,10 @@ final class Model: ObservableObject {
     func clean(_ s: Section) {
         let chosen = (items[s] ?? []).filter { selected[s]?.contains($0.path) == true }
         guard !chosen.isEmpty else { return }
+        if s == .dupes, !Scan.wholeGroups(chosen, of: items[s] ?? []).isEmpty {
+            alert = "Every copy of at least one file is selected. Keep one copy of each: use Select duplicates, or untick one file in each group."
+            return
+        }
         busy.insert(s)
         Task.detached {
             let r = s == .admin ? Cleaner.adminDelete(chosen) : Cleaner.trash(chosen)
@@ -242,9 +269,14 @@ final class Model: ObservableObject {
     }
 
     func emptyTrash() {
-        let r = Shell.run("/usr/bin/osascript", ["-e", "tell application \"Finder\" to empty trash"])
-        message = r.status == 0 ? "Trash emptied." : "Could not empty the Trash. \(r.out)"
-        refreshFreeSpace()
+        message = "Emptying the Trash…"
+        Task.detached {   // a big Trash takes a while; keep the window responsive
+            let r = Shell.run("/usr/bin/osascript", ["-e", "tell application \"Finder\" to empty trash"])
+            await MainActor.run {
+                self.message = r.status == 0 ? "Trash emptied." : "Could not empty the Trash. \(r.out)"
+                self.refreshFreeSpace()
+            }
+        }
     }
 }
 

@@ -122,7 +122,7 @@ struct ContentView: View {
         .tint(.brand)
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .alert("Some items could not be moved",
+        .alert("Sweep",
                isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button("OK") {}
         } message: {
@@ -366,7 +366,9 @@ struct ItemsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 HStack(spacing: 10) {
-                    Button("Select all") { model.selected[section] = Set(items.map(\.path)) }
+                    if section != .dupes {   // selecting every copy would leave no original
+                        Button("Select all") { model.selected[section] = Set(items.map(\.path)) }
+                    }
                     if section == .dupes {
                         Button("Select duplicates") {
                             model.selected[section] = Set(items.filter { $0.note == "duplicate" }.map(\.path))
@@ -385,7 +387,7 @@ struct ItemsView: View {
                     } else {
                         Button { model.clean(section) } label: { Label("Move to Trash", systemImage: "trash") }
                             .buttonStyle(.borderedProminent).controlSize(.large)
-                            .keyboardShortcut(.delete).disabled(picked.isEmpty || busy)
+                            .keyboardShortcut(.delete, modifiers: .command).disabled(picked.isEmpty || busy)   // ⌘⌫, like Finder
                     }
                 }
                 .padding(12)
@@ -450,7 +452,7 @@ struct AppsView: View {
                             Card {
                                 VStack(alignment: .leading, spacing: 8) {
                                     LabeledContent("App", value: FS.format(app.size))
-                                    LabeledContent("Leftover files", value: "\(model.leftovers.count)")
+                                    LabeledContent("Leftover files", value: model.loadingLeftovers ? "Looking…" : "\(model.leftovers.count)")
                                     ForEach(model.leftovers) { item in
                                         HStack {
                                             Text(item.path.replacingOccurrences(of: FS.home, with: "~"))
@@ -483,7 +485,8 @@ struct AppsView: View {
                                 Label(model.uninstalling ? "Uninstalling…" : "Uninstall · \(FS.format(total))", systemImage: "trash")
                                     .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.borderedProminent).controlSize(.large).tint(.red).disabled(running || model.uninstalling)
+                            .buttonStyle(.borderedProminent).controlSize(.large).tint(.red)
+                            .disabled(running || model.uninstalling || model.loadingLeftovers)
                         }
                     } else {
                         ContentUnavailableView("Choose an app", systemImage: "xmark.app",
@@ -616,6 +619,9 @@ struct ScheduleView: View {
                             Text("Automatic cleaning is on").font(.headline)
                             Text("Next clean \(next.formatted(.relative(presentation: .named))), \(next.formatted(date: .complete, time: .shortened)).")
                                 .foregroundStyle(.secondary)
+                            if let last = Schedule.lastRun() {
+                                Text("Last run: " + last).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                            }
                         }
                     } icon: {
                         Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
@@ -649,7 +655,7 @@ struct ScheduleView: View {
                     DatePicker("Time", selection: time, displayedComponents: .hourAndMinute)
                 }
                 SwiftUI.Section {
-                    Label("Only app caches, logs and developer tool caches, deleted permanently so the space comes back right away.",
+                    Label("Only app caches, logs and package-manager caches (npm, yarn, pnpm, gradle, cargo, Xcode), deleted permanently so the space comes back right away.",
                           systemImage: "checkmark.shield")
                     Label("Large files, duplicates, projects and Docker are never touched automatically.", systemImage: "hand.raised")
                     Label("If the Mac is asleep at that time, it runs when it wakes.", systemImage: "moon.zzz")
@@ -669,8 +675,8 @@ struct ScheduleView: View {
                     Label("Unsaved changes", systemImage: "pencil.circle.fill").foregroundStyle(.orange)
                     Spacer()
                     Button("Revert") { model.scheduleDraft = model.scheduleSaved }.controlSize(.large)
-                    Button("Save") { model.saveSchedule(binary: binary) }
-                        .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut("s")
+                    Button(model.savingSchedule ? "Saving…" : "Save") { model.saveSchedule(binary: binary) }
+                        .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut("s").disabled(model.savingSchedule)
                 }
                 .padding(12)
                 .background(.bar, in: RoundedRectangle(cornerRadius: 12, style: .continuous))

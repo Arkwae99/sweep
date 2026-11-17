@@ -6,6 +6,7 @@ public struct FileInfo: Sendable {
     public let size: Int64
     public let accessed: Date
     public let created: Date
+    public var iCloud = false
 }
 
 public enum Scan {
@@ -49,12 +50,15 @@ public enum Scan {
         folderChildren(["/Library/Caches", "/Library/Logs"]) { isProtected($0, running: []) }
     }
 
-    public static func devCaches(home: String = FS.home, minSize: Int64 = minJunk) -> [Item] {
+    /// Known package-manager caches, plus (for manual review only) everything in ~/.cache,
+    /// which can also hold large downloads such as ML models that are slow to get back.
+    public static func devCaches(home: String = FS.home, minSize: Int64 = minJunk, includeDotCache: Bool = true) -> [Item] {
         let fixed = devCachePaths.map { home + "/" + $0 }
             .filter { FileManager.default.fileExists(atPath: $0) }
             .map { Item(path: $0, size: FS.size($0), note: "tool cache") }
             .filter { $0.size >= minSize }
-        return (fixed + folderChildren([home + "/.cache"], minSize: minSize)).sorted { $0.size > $1.size }
+        let dot = includeDotCache ? folderChildren([home + "/.cache"], minSize: minSize) : []
+        return (fixed + dot).sorted { $0.size > $1.size }
     }
 
     public static func devJunk(home: String = FS.home, projects: String) -> [Item] {
@@ -102,7 +106,8 @@ public enum Scan {
 
     /// Regular, locally stored files. Hidden files, app bundles' insides and iCloud-only files are skipped.
     public static func files(in dirs: [String]) -> [FileInfo] {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentAccessDateKey, .creationDateKey, .isUbiquitousItemKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentAccessDateKey, .creationDateKey,
+                                      .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]
         var out: [FileInfo] = []
         for dir in dirs {
             guard let walker = FileManager.default.enumerator(
@@ -110,11 +115,13 @@ public enum Scan {
                 options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { _, _ in true })
             else { continue }
             for case let url as URL in walker {
-                guard let v = try? url.resourceValues(forKeys: Set(keys)),
-                      v.isRegularFile == true, v.isUbiquitousItem != true else { continue }
+                guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+                // iCloud files count only when downloaded; reading an iCloud-only one would trigger a download.
+                if v.isUbiquitousItem == true, v.ubiquitousItemDownloadingStatus != .current { continue }
                 out.append(FileInfo(
                     path: url.path, size: Int64(v.fileSize ?? 0),
-                    accessed: v.contentAccessDate ?? .distantPast, created: v.creationDate ?? .distantPast))
+                    accessed: v.contentAccessDate ?? .distantPast, created: v.creationDate ?? .distantPast,
+                    iCloud: v.isUbiquitousItem == true))
             }
         }
         return out
@@ -127,12 +134,18 @@ public enum Scan {
         return files(in: dirs).compactMap { f -> Item? in
             let old = f.accessed < cutoff && f.size >= oldMin
             guard f.size >= large || old else { return nil }
-            return Item(path: f.path, size: f.size, note: old ? "last opened " + FS.day(f.accessed) : "large file")
+            return Item(path: f.path, size: f.size, note: (old ? "last opened " + FS.day(f.accessed) : "large file") + iCloudNote(f))
         }.sorted { $0.size > $1.size }
     }
 
     public static func duplicates(_ dirs: [String], minSize: Int64 = minJunk) -> [Item] {
-        let bySize = Dictionary(grouping: files(in: dirs).filter { $0.size >= minSize }, by: \.size)
+        var seen = Set<String>()   // device:inode, so hard links to one file are not "duplicates"
+        let unique = files(in: dirs).filter { $0.size >= minSize }.filter { f in
+            var st = stat()
+            guard lstat(f.path, &st) == 0 else { return true }
+            return seen.insert("\(st.st_dev):\(st.st_ino)").inserted
+        }
+        let bySize = Dictionary(grouping: unique, by: \.size)
             .filter { $0.value.count > 1 }
         var out: [Item] = []
         for (size, sameSize) in bySize.sorted(by: { $0.key > $1.key }) {
@@ -140,11 +153,21 @@ public enum Scan {
             for (digest, same) in byHash where same.count > 1 {
                 for (i, f) in same.sorted(by: { ($0.created, $0.path) < ($1.created, $1.path) }).enumerated() {
                     out.append(Item(path: f.path, size: size,
-                                    note: i == 0 ? "original (oldest)" : "duplicate", group: String(digest.prefix(8))))
+                                    note: (i == 0 ? "original (oldest)" : "duplicate") + iCloudNote(f), group: String(digest.prefix(8))))
                 }
             }
         }
         return out
+    }
+
+    /// Removing an iCloud Drive file removes it from every device, so say so on the row.
+    static func iCloudNote(_ f: FileInfo) -> String { f.iCloud ? " · in iCloud, removes it on all devices" : "" }
+
+    /// Duplicate groups in which every copy is selected. Trashing those would leave no original.
+    public static func wholeGroups(_ selected: [Item], of all: [Item]) -> Set<String> {
+        let picked = Set(selected.map(\.path))
+        return Set(Dictionary(grouping: all.filter { !$0.group.isEmpty }, by: \.group)
+            .filter { $0.value.allSatisfy { picked.contains($0.path) } }.keys)
     }
 
     static func hash(_ path: String) -> String? {
