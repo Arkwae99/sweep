@@ -126,6 +126,24 @@ public sealed class CleanupTests : IDisposable
         Assert.Equal(file, Assert.Single(new CleanupPlan(local).Scan(Now)).Path);
     }
 
+    [WindowsFact]
+    [SupportedOSPlatform("windows")]
+    public void WindowsRefusesAReplacementEvenIfItsTimestampsAndSizeMatch()
+    {
+        string original = AddFile("Temp/old.tmp", 10);
+        var plan = new CleanupPlan(profile);
+        var reviewed = Assert.Single(plan.Scan(Now));
+        string moved = Path.Combine(profile, "original.tmp");
+        File.Move(original, moved);
+        AddFile("Temp/old.tmp", 10);
+        File.SetCreationTimeUtc(original, reviewed.CreatedUtc);
+        File.SetLastWriteTimeUtc(original, reviewed.ModifiedUtc);
+
+        Assert.ThrowsAny<IOException>(() => WindowsCleanup.Delete(plan, reviewed, Now));
+        Assert.True(File.Exists(original));
+        Assert.True(File.Exists(moved));
+    }
+
     private static void LinkDirectory(string link, string target)
     {
         if (!OperatingSystem.IsWindows())
