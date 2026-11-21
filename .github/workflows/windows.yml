@@ -1,0 +1,110 @@
+name: Sweep for Windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner_arch: x64os
+            os: windows-2025
+          - arch: arm64
+            runner_arch: arm64
+            os: windows-11-arm
+    env:
+      SWEEP_ARCH: ${{ matrix.arch }}
+      SWEEP_INSTALL_ARCH: ${{ matrix.runner_arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test cleanup and record coverage
+        run: dotnet test Windows/Sweep.Tests -c Release --collect 'XPlat Code Coverage'
+      - name: Build the desktop app
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.1.0' }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Expected a numeric release version, got $version" }
+          "SWEEP_VERSION=$version" >> $env:GITHUB_ENV
+          dotnet publish Windows/Sweep.App -c Release -r "win-$env:SWEEP_ARCH" --self-contained true `
+            -p:Version=$version -o "$env:RUNNER_TEMP\sweep-app"
+      - name: Build per-user installer
+        shell: pwsh
+        run: |
+          $inno = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          $compiler = Join-Path $env:RUNNER_TEMP 'inno-compiler'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_5_4/innosetup-6.5.4.exe' -OutFile $inno
+          if ((Get-FileHash $inno).Hash -ne 'FA73BF47A4DA250D185D07561C2BFDA387E5E20DB77E4570004CF6A133CC10B1') {
+            throw 'Inno Setup checksum mismatch'
+          }
+          $install = Start-Process $inno -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$compiler`"" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Inno Setup installation failed ($($install.ExitCode))" }
+          $name = "Sweep-Windows-$env:SWEEP_ARCH-Setup"
+          & "$compiler\ISCC.exe" "/DAppSource=$env:RUNNER_TEMP\sweep-app" "/DAppVersion=$env:SWEEP_VERSION" `
+            "/DAppArch=$env:SWEEP_INSTALL_ARCH" "/F$name" "/O$env:RUNNER_TEMP\sweep-release" Windows/installer/Sweep.iss
+      - name: Install, launch and uninstall on Windows
+        shell: pwsh
+        run: |
+          $setup = "$env:RUNNER_TEMP\sweep-release\Sweep-Windows-$env:SWEEP_ARCH-Setup.exe"
+          $directory = Join-Path $env:LOCALAPPDATA 'Programs\Sweep'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Sweep.lnk'
+          $install = Start-Process $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($install.ExitCode -ne 0 -or !(Test-Path $shortcut)) { throw 'Sweep install failed' }
+          $app = Start-Process "$directory\Sweep.exe" -ArgumentList '--smoke-test' -PassThru
+          if (!$app.WaitForExit(30000)) { $app.Kill(); throw 'Sweep launch timed out' }
+          if ($app.ExitCode -ne 0) { throw "Sweep launch failed ($($app.ExitCode))" }
+          $uninstall = Start-Process "$directory\unins000.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path "$directory\Sweep.exe") -or (Test-Path $shortcut)) {
+            throw 'Sweep uninstall failed'
+          }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Sweep-Windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/sweep-release/*.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  macos:
+    name: macOS Swift tests
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - run: swift test
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: Sweep-Windows-*
+          merge-multiple: true
+          path: release
+      - name: Publish installers and SHA-256 checksums
+        working-directory: release
+        run: |
+          sha256sum Sweep-Windows-*-Setup.exe > SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            --title "Sweep $GITHUB_REF_NAME" Sweep-Windows-*-Setup.exe SHA256SUMS.txt
