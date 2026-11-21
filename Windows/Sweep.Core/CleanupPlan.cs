@@ -7,6 +7,12 @@ public sealed record Candidate(string Path, long Length, DateTime ModifiedUtc, D
 
 internal readonly record struct WindowsFileIdentity(uint Volume, ulong FileIndex, string ResolvedPath);
 
+public sealed record CleanupLocation(string Category, string RelativePath, int MinimumDays);
+
+public sealed record CleanupLocationResult(CleanupLocation Location, bool WasScanned);
+
+public sealed record CleanupScan(IReadOnlyList<Candidate> Candidates, IReadOnlyList<CleanupLocationResult> Locations);
+
 public sealed class CleanupPlan
 {
     internal const FileAttributes Excluded = FileAttributes.ReparsePoint | FileAttributes.Offline |
@@ -14,6 +20,14 @@ public sealed class CleanupPlan
     internal const FileAttributes ExcludedFile = Excluded | FileAttributes.Directory | FileAttributes.ReadOnly;
 
     private readonly Root[] roots;
+
+    public static IReadOnlyList<CleanupLocation> Locations { get; } = Array.AsReadOnly<CleanupLocation>(
+    [
+        new("Temporary files", "Temp", 7),
+        new("npm logs", Path.Combine("npm-cache", "_logs"), 30),
+        new("npm download cache", Path.Combine("npm-cache", "_cacache", "content-v2"), 30),
+        new("NuGet HTTP cache", Path.Combine("NuGet", "v3-cache"), 30)
+    ]);
 
     public CleanupPlan(string localAppData)
     {
@@ -25,32 +39,37 @@ public sealed class CleanupPlan
         if (profileData == volume || (OperatingSystem.IsWindows() && new DriveInfo(volume).DriveType != DriveType.Fixed))
             throw new ArgumentException("A per-user folder on a fixed local drive is required.", nameof(localAppData));
 
-        roots =
-        [
-            new(Path.Combine(profileData, "Temp"), "Temporary files", 7),
-            new(Path.Combine(profileData, "npm-cache", "_logs"), "npm logs", 30),
-            new(Path.Combine(profileData, "npm-cache", "_cacache", "content-v2"), "npm download cache", 30),
-            new(Path.Combine(profileData, "NuGet", "v3-cache"), "NuGet HTTP cache", 30)
-        ];
+        roots = Locations.Select(location => new Root(Path.Combine(profileData, location.RelativePath), location)).ToArray();
     }
 
-    public IReadOnlyList<Candidate> Scan(DateTime now)
+    public IReadOnlyList<Candidate> Scan(DateTime now) => ScanWithLocations(now).Candidates;
+
+    public CleanupScan ScanWithLocations(DateTime now, CancellationToken cancellationToken = default)
     {
         var candidates = new List<Candidate>();
+        var locations = new List<CleanupLocationResult>(roots.Length);
         foreach (Root root in roots)
-            ScanRoot(root, now, candidates);
+        {
+            bool wasScanned = ScanRoot(root, now, candidates, cancellationToken);
+            locations.Add(new CleanupLocationResult(root.Location, wasScanned));
+        }
 
-        return candidates.OrderByDescending(file => file.Length)
+        cancellationToken.ThrowIfCancellationRequested();
+        var ordered = candidates.OrderByDescending(file => file.Length)
             .ThenBy(file => file.Path, StringComparer.Ordinal).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        return new CleanupScan(ordered, locations.AsReadOnly());
     }
 
-    private static void ScanRoot(Root root, DateTime now, List<Candidate> candidates)
+    private static bool ScanRoot(Root root, DateTime now, List<Candidate> candidates, CancellationToken cancellationToken)
     {
-        var options = new EnumerationOptions { AttributesToSkip = Excluded, IgnoreInaccessible = true };
+        var options = new EnumerationOptions { AttributesToSkip = Excluded, IgnoreInaccessible = false };
         var pending = new Stack<string>();
+        bool wasScanned = false;
         pending.Push(root.Path);
         while (pending.TryPop(out string? directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!IsSafeDirectory(directory, root.Path))
                 continue;
 
@@ -58,6 +77,7 @@ public sealed class CleanupPlan
             {
                 foreach (FileSystemInfo entry in new DirectoryInfo(directory).EnumerateFileSystemInfos("*", options))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (entry is DirectoryInfo)
                         pending.Push(entry.FullName);
                     else if (ReadCandidate((FileInfo)entry, root, now) is { } file)
@@ -67,12 +87,15 @@ public sealed class CleanupPlan
                             candidates.Add(reviewed);
                     }
                 }
+                if (directory == root.Path)
+                    wasScanned = true;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 // An inaccessible directory or a changing temp folder can interrupt enumeration.
             }
         }
+        return wasScanned;
     }
 
     public bool IsCurrent(Candidate candidate, DateTime now)
@@ -96,10 +119,10 @@ public sealed class CleanupPlan
     {
         try
         {
-            if ((info.Attributes & ExcludedFile) != 0 || info.LastWriteTimeUtc > now.AddDays(-root.MinimumDays) || info.Length == 0)
+            if ((info.Attributes & ExcludedFile) != 0 || info.LastWriteTimeUtc > now.AddDays(-root.Location.MinimumDays) || info.Length == 0)
                 return null;
 
-            return new Candidate(info.FullName, info.Length, info.LastWriteTimeUtc, info.CreationTimeUtc, root.Category);
+            return new Candidate(info.FullName, info.Length, info.LastWriteTimeUtc, info.CreationTimeUtc, root.Location.Category);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -136,5 +159,5 @@ public sealed class CleanupPlan
         return true;
     }
 
-    private sealed record Root(string Path, string Category, int MinimumDays);
+    private sealed record Root(string Path, CleanupLocation Location);
 }

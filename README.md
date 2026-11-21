@@ -10,7 +10,9 @@
 2. Under **Assets**, download `Sweep-Windows-x64-Setup.exe` for an Intel or AMD PC, or `Sweep-Windows-arm64-Setup.exe` for an ARM PC. Check **Settings → System → About → System type** if you are unsure.
 3. Run the installer and open **Sweep** from the Start menu. The installer includes .NET and installs for the current user. The installer is unsigned, so Windows SmartScreen may show a warning.
 
-**Cleanup** lists nonempty files last modified at least seven days ago in `%LOCALAPPDATA%\Temp` and at least 30 days ago in the default npm log, npm download and NuGet HTTP caches. Review the list, check the files you want removed and confirm **Delete selected**. This permanently deletes those files to recover disk space. Sweep skips locked, changed and redirected files.
+**Cleanup** scans `%LOCALAPPDATA%\Temp` for nonempty files last modified at least seven days ago, and the default npm log, npm download and NuGet HTTP caches for files at least 30 days old. Each scan location shows the number and size of eligible files. Select a location, search by file path, or click a column header to sort. Use **Open in Explorer** to inspect the current file.
+
+Check the files you want removed or use **Select shown** to check the visible results. Changing a filter clears checks for any files it hides. **Delete selected** asks for confirmation before permanently deleting files. Sweep skips locked, changed and redirected files.
 
 **Memory** shows available RAM and the processes with the largest working sets. Use **Open Task Manager** to decide which running apps to close.
 

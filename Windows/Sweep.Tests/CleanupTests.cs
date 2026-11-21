@@ -40,6 +40,42 @@ public sealed class CleanupTests : IDisposable
     }
 
     [Fact]
+    public void ScanReportsEmptyAndUnavailableLocationsAlongsideResults()
+    {
+        string eligible = AddFile("Temp/old.tmp", 8);
+        AddFile("npm-cache/_logs/recent.log", 3);
+
+        var report = new CleanupPlan(profile).ScanWithLocations(Now);
+
+        Assert.Equal(eligible, Assert.Single(report.Candidates).Path);
+        Assert.Collection(report.Locations,
+            temp =>
+            {
+                Assert.Equal("Temporary files", temp.Location.Category);
+                Assert.Equal(7, temp.Location.MinimumDays);
+                Assert.True(temp.WasScanned);
+            },
+            logs =>
+            {
+                Assert.Equal(Path.Combine("npm-cache", "_logs"), logs.Location.RelativePath);
+                Assert.Equal(30, logs.Location.MinimumDays);
+                Assert.True(logs.WasScanned);
+            },
+            downloads => Assert.False(downloads.WasScanned),
+            nuget => Assert.False(nuget.WasScanned));
+    }
+
+    [Fact]
+    public void ScanCanBeCanceledWithoutReturningPartialResults()
+    {
+        AddFile("Temp/old.tmp", 8);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => new CleanupPlan(profile).ScanWithLocations(Now, cancellation.Token));
+    }
+
+    [Fact]
     public void ReviewRejectsFilesThatChangedAndPathsNextToAllowedRoots()
     {
         string eligible = AddFile("Temp/old.tmp", 10);

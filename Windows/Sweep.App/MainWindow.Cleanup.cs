@@ -4,17 +4,33 @@ namespace Sweep.App;
 
 internal sealed partial class MainWindow
 {
+    private CancellationTokenSource? scanCancellation;
+    private bool busy;
+
     private async Task ScanFiles()
     {
-        SetBusy(true, "Scanning…");
-        ShowCandidates([]);
+        if (scanCancellation is { } activeScan)
+        {
+            activeScan.Cancel();
+            scan.Enabled = false;
+            status.Text = "Canceling scan…";
+            return;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        scanCancellation = cancellation;
+        SetBusy(true, "Scanning for eligible files…");
         try
         {
-            var results = await Task.Run(() => new CleanupPlan(localData).Scan(DateTime.UtcNow));
-            ShowCandidates(results);
-            status.Text = results.Count == 0
-                ? "No eligible files found."
-                : $"Found {results.Count:N0} files ({FormatBytes(results.Sum(file => file.Length))}). Select the files to delete.";
+            var results = await Task.Run(() => new CleanupPlan(localData).ScanWithLocations(DateTime.UtcNow, cancellation.Token));
+            cancellation.Token.ThrowIfCancellationRequested();
+            scannedLocations = results.Locations;
+            ShowCandidates(results.Candidates);
+            status.Text = $"Scan finished at {DateTime.Now:t}.";
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            status.Text = scannedLocations is null ? "Scan canceled." : "Scan canceled. Showing the previous results.";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -23,18 +39,19 @@ internal sealed partial class MainWindow
         }
         finally
         {
+            scanCancellation = null;
             SetBusy(false);
         }
     }
 
     private async Task DeleteSelected()
     {
-        Candidate[] reviewed = selected.Order().Select(index => candidates[index]).ToArray();
+        Candidate[] reviewed = review.GetSelected();
         if (reviewed.Length == 0)
             return;
 
         var confirm = MessageBox.Show(this,
-            $"Permanently delete {reviewed.Length:N0} selected files ({FormatBytes(reviewed.Sum(file => file.Length))})?",
+            $"Permanently delete {FormatFileCount(reviewed.Length, "selected ")} ({FormatBytes(review.SelectedBytes)})?",
             "Delete files", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (confirm != DialogResult.Yes)
             return;
@@ -43,8 +60,8 @@ internal sealed partial class MainWindow
         try
         {
             var result = await Task.Run(() => DeleteFiles(reviewed));
-            ShowCandidates(candidates.Where(file => !result.Deleted.Contains(file)).ToArray());
-            status.Text = $"Deleted {result.Deleted.Count:N0} files ({FormatBytes(result.Deleted.Sum(file => file.Length))}). " +
+            ShowCandidates(review.Results.Where(file => !result.Deleted.Contains(file)).ToArray());
+            status.Text = $"Deleted {FormatFileCount(result.Deleted.Count)} ({FormatBytes(result.Deleted.Sum(file => file.Length))}). " +
                 $"Skipped {result.Failed:N0}.";
             if (result.Failed > 0)
             {
@@ -91,18 +108,17 @@ internal sealed partial class MainWindow
 
     private void ShowCandidates(IReadOnlyList<Candidate> results)
     {
-        files.RowCount = 0;
-        candidates = results;
-        selected.Clear();
-        files.RowCount = results.Count;
-        UpdateSelection();
+        review.Load(results);
+        UpdateLocations();
+        UpdateReview();
     }
 
     private void SetSelection(bool select)
     {
-        selected.Clear();
         if (select)
-            selected.UnionWith(Enumerable.Range(0, candidates.Count));
+            review.SelectVisible();
+        else
+            review.ClearSelection();
         files.Invalidate();
         UpdateSelection();
     }
@@ -110,18 +126,26 @@ internal sealed partial class MainWindow
     private void SetBusy(bool value, string? message = null)
     {
         busy = value;
-        scan.Enabled = !busy;
-        files.ReadOnly = busy;
+        scan.Text = scanCancellation is null ? "&Scan now" : "Cancel &scan";
+        scan.Enabled = !value || scanCancellation is not null;
+        files.ReadOnly = value;
+        allLocations.Enabled = !value;
+        foreach (RadioButton button in locationButtons.Values)
+            button.Enabled = !value;
         if (message is not null)
             status.Text = message;
+        UpdateReviewDetails();
         UpdateSelection();
     }
 
     private void UpdateSelection()
     {
-        selectAll.Enabled = !busy && selected.Count < candidates.Count;
-        clear.Enabled = !busy && selected.Count > 0;
-        remove.Enabled = !busy && selected.Count > 0;
-        remove.Text = selected.Count == 0 ? "&Delete selected…" : $"&Delete selected ({selected.Count:N0})…";
+        search.Enabled = !busy && review.Results.Count > 0;
+        open.Enabled = !busy && FocusedFile is not null;
+        selectAll.Enabled = !busy && review.SelectedCount < review.Visible.Count;
+        clear.Enabled = !busy && review.SelectedCount > 0;
+        remove.Enabled = clear.Enabled;
+        selection.Text = review.SelectedCount == 0 ? "No files selected" :
+            $"{review.SelectedCount:N0} selected ({FormatBytes(review.SelectedBytes)})";
     }
 }
