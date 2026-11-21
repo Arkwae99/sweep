@@ -13,4 +13,12 @@
   <ItemGroup>
     <ProjectReference Include="../Sweep.Core/Sweep.Core.csproj" />
   </ItemGroup>
+  <Target Name="CopyRuntimeNotices" AfterTargets="Publish" Condition="'$(SelfContained)' == 'true'">
+    <Copy Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'"
+          SourceFiles="%(ResolvedRuntimePack.PackageDirectory)/LICENSE.TXT;%(ResolvedRuntimePack.PackageDirectory)/THIRD-PARTY-NOTICES.TXT"
+          DestinationFiles="$(PublishDir)licenses/dotnet-license.txt;$(PublishDir)licenses/dotnet-third-party-notices.txt" />
+    <Copy Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.WindowsDesktop.App'"
+          SourceFiles="%(ResolvedRuntimePack.PackageDirectory)/LICENSE"
+          DestinationFiles="$(PublishDir)licenses/windowsdesktop-license.txt" />
+  </Target>
 </Project>

@@ -1,6 +1,11 @@
 namespace Sweep.Core;
 
-public sealed record Candidate(string Path, long Length, DateTime ModifiedUtc, DateTime CreatedUtc, string Category = "");
+public sealed record Candidate(string Path, long Length, DateTime ModifiedUtc, DateTime CreatedUtc, string Category = "")
+{
+    internal WindowsFileIdentity? Identity { get; init; }
+}
+
+internal readonly record struct WindowsFileIdentity(uint Volume, ulong FileIndex, string ResolvedPath);
 
 public sealed class CleanupPlan
 {
@@ -56,7 +61,11 @@ public sealed class CleanupPlan
                     if (entry is DirectoryInfo)
                         pending.Push(entry.FullName);
                     else if (ReadCandidate((FileInfo)entry, root, now) is { } file)
-                        candidates.Add(file);
+                    {
+                        Candidate? reviewed = OperatingSystem.IsWindows() ? WindowsCleanup.Identify(file) : file;
+                        if (reviewed is not null)
+                            candidates.Add(reviewed);
+                    }
                 }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)

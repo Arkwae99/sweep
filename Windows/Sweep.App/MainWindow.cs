@@ -51,7 +51,7 @@ internal sealed partial class MainWindow : Form
         UpdateSelection();
         if (refreshOnShow)
             Shown += async (_, _) => await RefreshOverview();
-        FormClosing += (_, e) => e.Cancel = busy;
+        FormClosing += (_, e) => e.Cancel = busy && e.CloseReason == CloseReason.UserClosing;
     }
 
     private TabPage CreateCleanupPage()
